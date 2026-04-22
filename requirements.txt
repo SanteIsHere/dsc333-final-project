@@ -3,3 +3,4 @@ streamlit
 pandas
 numpy
 plotly-express
+fastapi # To define API routes
