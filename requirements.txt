@@ -4,3 +4,4 @@ pandas
 numpy
 plotly-express
 fastapi # To define API routes
+uvicorn # Server for web app
