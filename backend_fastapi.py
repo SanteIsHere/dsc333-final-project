@@ -5,8 +5,26 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import uvicorn
-import httpx
 import os
+
+# ---------------------------------------------------------
+# Environment Detection (Deployment vs Local Desktop)
+# ---------------------------------------------------------
+try:
+    from picamera2 import Picamera2
+    PICAMERA_AVAILABLE = True
+    print("Hardware detected: Raspberry Pi. Using PiCamera2.")
+    
+    # Initialize PiCamera globally so it doesn't restart on every request
+    picam2 = Picamera2()
+    # Lower resolution speeds up accumulateWeighted matrix math
+    config = picam2.create_preview_configuration(main={"size": (640, 480)})
+    picam2.configure(config)
+    picam2.start()
+    
+except ImportError:
+    PICAMERA_AVAILABLE = False
+    print("Hardware detected: Desktop. Falling back to OpenCV VideoCapture.")
 
 # ---------------------------------------------------------
 # 1. App Initialization & Configuration
@@ -16,7 +34,7 @@ app = FastAPI(title="Lansing Building Products Analytics API")
 # Enable CORS so Streamlit (running on a different port) can make requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this to your Streamlit IP
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,46 +52,68 @@ SQL_KEY = os.environ.get("CLOUD_SQL_KEY")
 
 
 # ---------------------------------------------------------
-# 3. Camera Processing Logic (Teammate's Motion Blur)
+# 3. Camera Processing Logic (Dual-Purpose + Motion Blur)
 # ---------------------------------------------------------
 def generate_motion_blur_frames():
     """
-    Captures video from the camera, applies a motion blur effect using
-    accumulateWeighted, and yields the frames as a byte stream.
+    Captures video, applies a motion blur effect using accumulateWeighted, 
+    and yields the frames as a byte stream. Adapts to hardware context.
     """
-    cap = cv2.VideoCapture(0)
-
-    ret, frame = cap.read()
-    if not ret:
-        print("Error: Could not read from camera.")
-        cap.release()
-        return
+    cap = None
+    
+    # 1. Grab the initial frame based on the hardware environment
+    if PICAMERA_AVAILABLE:
+        try:
+            raw_frame = picam2.capture_array()
+            # Fix the PiCamera2 RGB vs OpenCV BGR color channel swap
+            frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
+        except Exception as e:
+            print(f"PiCamera Error: {e}")
+            return
+    else:
+        cap = cv2.VideoCapture(0)
+        # Match the Pi's resolution for testing accuracy
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        ret, frame = cap.read()
+        if not ret:
+            print("Desktop Camera Error: Could not read webcam.")
+            if cap:
+                cap.release()
+            return
 
     avg_frame = np.float32(frame)
 
+    # 2. Main processing loop
     try:
         while True:
-            success, frame = cap.read()
-            if not success:
-                break
+            # Capture the next frame depending on hardware
+            if PICAMERA_AVAILABLE:
+                raw_frame = picam2.capture_array()
+                frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
+            else:
+                success, frame = cap.read()
+                if not success:
+                    break
 
             # Apply motion blur logic
             cv2.accumulateWeighted(frame, avg_frame, 0.2)
             blurred_frame = cv2.convertScaleAbs(avg_frame)
 
-            # Encode the processed frame as a JPEG
+            # Encode and yield as a JPEG
             ret, buffer = cv2.imencode(".jpg", blurred_frame)
             if not ret:
                 continue
 
-            frame_bytes = buffer.tobytes()
-
-            # Yield the output in the multipart format expected by streaming protocols
             yield (
-                b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+                b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
             )
+    except Exception as e:
+        print(f"Stream interrupted: {e}")
     finally:
-        cap.release()
+        # Clean up desktop camera if we used it
+        if not PICAMERA_AVAILABLE and cap:
+            cap.release()
 
 
 # ---------------------------------------------------------
