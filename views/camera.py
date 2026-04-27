@@ -9,14 +9,23 @@ st.subheader("Lansing Building Products - Foot Traffic Monitor")
 st.info("🔒 **Privacy Mode Active:** Live motion blur is applied at the hardware level to protect customer identities before data reaches the dashboard.")
 
 # Define the backend streaming endpoint
-# Ensure the port matches your Uvicorn setup (8080) and the route matches (@app.get("/camera"))
-STREAM_URL = "http://localhost:8080/camera"
+# IMPORTANT: If you are viewing this dashboard on your desktop, but the backend is running on the Pi,
+# 'localhost' will not work. Change this to the Pi's local IP (e.g., http://192.168.1.X:8080/camera)
+# or your PiTunnel URL.
+STREAM_URL = "http://10.0.0.105:8080/camera"
 
-# Streamlit's st.image is smart enough to handle multipart HTTP streams natively!
-try:
-    st.image(STREAM_URL, use_container_width=True, caption="Live OpenCV Motion Blur Feed")
-except Exception as e:
-    st.error(f"Could not connect to the camera feed. Ensure the FastAPI backend is running. Error: {e}")
+# Inject custom HTML to render the multipart stream natively
+st.markdown(
+    f"""
+    <div style="display: flex; justify-content: center; margin-bottom: 10px;">
+        <img src="{STREAM_URL}" style="width: 100%; max-width: 800px; border-radius: 8px; border: 1px solid #ddd;" alt="Live Camera Stream" />
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# Keep the caption cleanly aligned under the video
+st.caption("<div style='text-align: center;'>Live OpenCV Motion Blur Feed</div>", unsafe_allow_html=True)
 
 st.divider()
 
