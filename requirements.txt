@@ -6,3 +6,4 @@ plotly-express
 fastapi # To define API routes
 uvicorn # Server for web app
 dotenv # To load API keys from env vars
+opencv-python
