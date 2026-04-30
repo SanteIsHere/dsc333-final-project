@@ -1,143 +1,102 @@
+import os
 import cv2
 import numpy as np
+import sqlalchemy
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from google.cloud.sql.connector import Connector, IPTypes
+from sqlalchemy import text
 from dotenv import load_dotenv
-import uvicorn
-import os
 
-# ---------------------------------------------------------
-# Environment Detection (Deployment vs Local Desktop)
-# ---------------------------------------------------------
-try:
-    from picamera2 import Picamera2
-    PICAMERA_AVAILABLE = True
-    print("Hardware detected: Raspberry Pi. Using PiCamera2.")
-    
-    # Initialize PiCamera globally so it doesn't restart on every request
-    picam2 = Picamera2()
-    # Lower resolution speeds up accumulateWeighted matrix math
-    config = picam2.create_preview_configuration(main={"size": (640, 480)})
-    picam2.configure(config)
-    picam2.start()
-    
-except ImportError:
-    PICAMERA_AVAILABLE = False
-    print("Hardware detected: Desktop. Falling back to OpenCV VideoCapture.")
+# Load API keys and DB credentials from .env file
+load_dotenv()
 
-# ---------------------------------------------------------
-# 1. App Initialization & Configuration
-# ---------------------------------------------------------
-app = FastAPI(title="Lansing Building Products Analytics API")
+app = FastAPI()
 
-# Enable CORS so Streamlit (running on a different port) can make requests
+# Enable CORS for Streamlit communication
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------
-# 2. API Keys Retrieval
-# ---------------------------------------------------------
-load_dotenv()  # Retrieve API keys from .env file
-
-OW_KEY = os.environ.get("OPENWEATHER_API_KEY")
-CV_KEY = os.environ.get("VISION_API_KEY")
-GENAI_KEY = os.environ.get("GENAI_API_KEY")
-SQL_KEY = os.environ.get("CLOUD_SQL_KEY")
+# --- SECTION 1: CLOUD SQL CONNECTION (MySQL) ---
+connector = Connector()
 
 
-# ---------------------------------------------------------
-# 3. Camera Processing Logic (Dual-Purpose + Motion Blur)
-# ---------------------------------------------------------
+def getconn():
+    # Uses Application Data/Service Account credentials
+    conn = connector.connect(
+        os.getenv("INSTANCE_CONNECTION_NAME"),  # project:region:instance
+        "pymysql",
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASS"),
+        db=os.getenv("DB_NAME"),
+        ip_type=IPTypes.PUBLIC,
+    )
+    return conn
+
+
+# Create the SQLAlchemy Engine
+pool = sqlalchemy.create_engine(
+    "mysql+pymysql://",
+    creator=getconn,
+)
+
+# --- SECTION 2: CAMERA LOGIC (Hardware Detection & Motion Blur) ---
+try:
+    # Attempt to load Raspberry Pi specific hardware drivers
+    from picamera2 import Picamera2
+
+    camera_hardware = "Raspberry Pi"
+    picam2 = Picamera2()
+    config = picam2.create_preview_configuration(main={"size": (640, 480)})
+    picam2.configure(config)
+    picam2.start()
+except (ImportError, RuntimeError):
+    # Fallback to standard USB webcams for desktop testing
+    camera_hardware = "Desktop"
+    cap = cv2.VideoCapture(0)
+
+
 def generate_motion_blur_frames():
-    """
-    Captures video, applies a motion blur effect using accumulateWeighted, 
-    and yields the frames as a byte stream. Adapts to hardware context.
-    """
-    cap = None
-    
-    # 1. Grab the initial frame based on the hardware environment
-    if PICAMERA_AVAILABLE:
-        try:
+    """Generator for streaming blurred video frames."""
+    avg = None
+    while True:
+        # Capture frame based on detected hardware
+        if camera_hardware == "Raspberry Pi":
             raw_frame = picam2.capture_array()
-            # Fix the PiCamera2 RGB vs OpenCV BGR color channel swap
+            # Convert RGB (Pi) to BGR (OpenCV) to prevent color swapping
             frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
-        except Exception as e:
-            print(f"PiCamera Error: {e}")
-            return
-    else:
-        cap = cv2.VideoCapture(0)
-        # Match the Pi's resolution for testing accuracy
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        ret, frame = cap.read()
-        if not ret:
-            print("Desktop Camera Error: Could not read webcam.")
-            if cap:
-                cap.release()
-            return
+        else:
+            success, frame = cap.read()
+            if not success:
+                break
 
-    avg_frame = np.float32(frame)
+        # Motion Blur Math (teammate's logic)
+        frame_float = frame.astype("float")
+        if avg is None:
+            avg = frame_float
+        else:
+            cv2.accumulateWeighted(frame_float, avg, 0.1)
 
-    # 2. Main processing loop
-    try:
-        while True:
-            # Capture the next frame depending on hardware
-            if PICAMERA_AVAILABLE:
-                raw_frame = picam2.capture_array()
-                frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
-            else:
-                success, frame = cap.read()
-                if not success:
-                    break
+        blurred_frame = cv2.convertScaleAbs(avg)
 
-            # Apply motion blur logic
-            cv2.accumulateWeighted(frame, avg_frame, 0.2)
-            blurred_frame = cv2.convertScaleAbs(avg_frame)
-
-            # Encode and yield as a JPEG
-            ret, buffer = cv2.imencode(".jpg", blurred_frame)
-            if not ret:
-                continue
-
-            yield (
-                b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
-            )
-    except Exception as e:
-        print(f"Stream interrupted: {e}")
-    finally:
-        # Clean up desktop camera if we used it
-        if not PICAMERA_AVAILABLE and cap:
-            cap.release()
+        # Encode for HTTP streaming
+        _, buffer = cv2.imencode(".jpg", blurred_frame)
+        yield (
+            b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+        )
 
 
-# ---------------------------------------------------------
-# 4. Route Definitions
-# ---------------------------------------------------------
-@app.get("/")
-@app.get("/index")
-async def root():
-    """
-    Define the index page route. Provides high-level project stats.
-    """
-    return {
-        "message": "Hello World!",
-        "project_name": "Measuring Foot Traffic at Lansing Building Products",
-        "system_status": "Operational",
-        "active_sensors": ["Camera-01", "Database"],
-    }
+# --- SECTION 3: API ROUTES ---
 
 
 @app.get("/camera")
-async def camera():
-    """
-    Route serving the live motion-blurred camera feed
-    """
+async def camera_feed():
+    """Streams the motion-blurred video."""
     return StreamingResponse(
         generate_motion_blur_frames(),
         media_type="multipart/x-mixed-replace; boundary=frame",
@@ -145,18 +104,35 @@ async def camera():
 
 
 @app.get("/records")
-async def records():
-    """
-    Route to retrieve database records
-    """
-    # Placeholder for database query results until SQL is connected
-    data = [
-        {"id": 101, "item": "Person Detected", "time": "12:01:22"},
-        {"id": 102, "item": "Motion Detected", "time": "12:05:45"},
-    ]
-    return {"results": data}
+async def get_records():
+    """Queries Detections (Event Layer) and Revenue (Aggregate Layer)."""
+    try:
+        # async def prevents I/O blocking of the camera stream
+        with pool.connect() as db_conn:
+            # Query 1: Raw detection logs
+            detection_query = text(
+                "SELECT id, timestamp, temperature, weather_condition FROM detections ORDER BY timestamp DESC LIMIT 10"
+            )
+            detections_result = db_conn.execute(detection_query)
+
+            # Query 2: Daily business metrics
+            revenue_query = text(
+                "SELECT date, total_revenue FROM daily_revenue ORDER BY date DESC LIMIT 7"
+            )
+            revenue_result = db_conn.execute(revenue_query)
+
+            return {
+                "detections": [dict(row._mapping) for row in detections_result],
+                "revenue": [dict(row._mapping) for row in revenue_result],
+                "status": "success",
+            }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 if __name__ == "__main__":
-    # Start the app with uvicorn web server
+    import uvicorn
+
+    # Bound to 0.0.0.0 for external access on port 8080
+    print(f"Hardware detected: {camera_hardware}")
     uvicorn.run(app, host="0.0.0.0", port=8080)

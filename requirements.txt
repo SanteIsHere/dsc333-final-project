@@ -9,3 +9,4 @@ dotenv # To load API keys from env vars
 opencv-python # Computer vision library
 httpx
 picamera2 # Needed to establish proper camera functionality
+cloud-sql-python-connector # To connect to Google Cloud SQL server
