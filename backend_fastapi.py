@@ -132,8 +132,19 @@ def generate_motion_blur_frames(background_tasks: BackgroundTasks):
             last_detection_time = current_time
             print(f"Motion detected! Cooldown activated for {COOLDOWN_SECONDS} seconds.")
         
-        # Encode to MJPEG format for Streamlit
-        ret, buffer = cv2.imencode('.jpg', frameDelta)
+        # --- PRIVACY BLUR COMPOSITING ---
+        
+        # 1. Dilate (expand) the threshold mask slightly so the blur fully covers the person's edges
+        mask = cv2.dilate(thresh, None, iterations=5)
+        
+        # 2. Create a completely out-of-focus version of the live color frame
+        blurred_live_frame = cv2.GaussianBlur(frame, (99, 99), 0)
+        
+        # 3. Paste the blurred pixels onto the clear frame ONLY where motion is detected
+        frame[mask > 0] = blurred_live_frame[mask > 0]
+        
+        # Encode the newly composited color frame to MJPEG format for Streamlit
+        ret, buffer = cv2.imencode('.jpg', frame)
         frame_bytes = buffer.tobytes()
         
         yield (b'--frame\r\n'
