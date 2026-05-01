@@ -1,138 +1,162 @@
 import os
 import cv2
-import numpy as np
-import sqlalchemy
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import time
+import httpx
+import datetime
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import StreamingResponse
-from google.cloud.sql.connector import Connector, IPTypes
-from sqlalchemy import text
+from fastapi.middleware.cors import CORSMiddleware
+from google.cloud.sql.connector import Connector
+import sqlalchemy
 from dotenv import load_dotenv
 
-# Load API keys and DB credentials from .env file
+# Load environment variables (DB_USER, DB_PASS, INSTANCE_CONNECTION_NAME, WEATHER_API_KEY)
 load_dotenv()
 
 app = FastAPI()
 
-# Enable CORS for Streamlit communication
+# Enable CORS for Streamlit integration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- SECTION 1: CLOUD SQL CONNECTION (MySQL) ---
+# --- 1. Cloud SQL Setup ---
 connector = Connector()
 
-
 def getconn():
-    # Uses Application Data/Service Account credentials
-    conn = connector.connect(
-        os.getenv("INSTANCE_CONNECTION_NAME"),  # project:region:instance
+    return connector.connect(
+        os.getenv("INSTANCE_CONNECTION_NAME"),
         "pymysql",
         user=os.getenv("DB_USER"),
         password=os.getenv("DB_PASS"),
-        db=os.getenv("DB_NAME"),
-        ip_type=IPTypes.PUBLIC,
+        db="lansing_data"
     )
-    return conn
 
-
-# Create the SQLAlchemy Engine
 pool = sqlalchemy.create_engine(
     "mysql+pymysql://",
     creator=getconn,
 )
 
-# --- SECTION 2: CAMERA LOGIC (Hardware Detection & Motion Blur) ---
+# --- 2. Hardware-Agnostic Camera Setup ---
 try:
-    # Attempt to load Raspberry Pi specific hardware drivers
     from picamera2 import Picamera2
+    camera = Picamera2()
+    # Moderate resolution to ensure smooth frame rate during float math
+    camera.configure(camera.create_preview_configuration(main={"size": (640, 480)}))
+    camera.start()
+    USE_PICAMERA = True
+    print("Hardware detected: Raspberry Pi. Using PiCamera2.")
+except ModuleNotFoundError:
+    camera = cv2.VideoCapture(0)
+    USE_PICAMERA = False
+    print("Hardware detected: Desktop. Falling back to OpenCV VideoCapture.")
 
-    camera_hardware = "Raspberry Pi"
-    picam2 = Picamera2()
-    config = picam2.create_preview_configuration(main={"size": (640, 480)})
-    picam2.configure(config)
-    picam2.start()
-except (ImportError, RuntimeError):
-    # Fallback to standard USB webcams for desktop testing
-    camera_hardware = "Desktop"
-    cap = cv2.VideoCapture(0)
+
+# --- 3. Asynchronous Database Writing Logic ---
+async def fetch_weather_data():
+    """Asynchronously fetches current weather using httpx so video doesn't block."""
+    api_key = os.getenv("WEATHER_API_KEY")
+    # Example coordinates for Lansing area
+    url = f"https://api.openweathermap.org/data/2.5/weather?lat=42.7325&lon=-84.5555&appid={api_key}&units=imperial"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url)
+            data = response.json()
+            return {
+                "temp": data["main"]["temp"],
+                "condition": data["weather"][0]["description"]
+            }
+        except Exception as e:
+            print(f"Weather API failed: {e}")
+            return {"temp": 0.0, "condition": "Unknown"}
+
+async def log_motion_detection():
+    """The Event Layer: Fetches weather and securely writes to Cloud SQL."""
+    current_weather = await fetch_weather_data()
+    
+    with pool.connect() as db_conn:
+        insert_query = sqlalchemy.text("""
+            INSERT INTO detections (timestamp, temperature, weather_condition)
+            VALUES (:timestamp, :temp, :condition)
+        """)
+        
+        db_conn.execute(insert_query, {
+            "timestamp": datetime.datetime.now(),
+            "temp": current_weather['temp'],
+            "condition": current_weather['condition']
+        })
+        db_conn.commit()
+        print("Motion detection logged securely to Cloud SQL.")
 
 
-def generate_motion_blur_frames():
-    """Generator for streaming blurred video frames."""
+# --- 4. Motion Blur Generator with Time-Based Cooldown ---
+def generate_motion_blur_frames(background_tasks: BackgroundTasks):
     avg = None
+    last_detection_time = 0.0
+    COOLDOWN_SECONDS = 60.0  # Wait 60 seconds before logging another person
+    
     while True:
-        # Capture frame based on detected hardware
-        if camera_hardware == "Raspberry Pi":
-            raw_frame = picam2.capture_array()
-            # Convert RGB (Pi) to BGR (OpenCV) to prevent color swapping
+        if USE_PICAMERA:
+            # Capture array and convert RGB to BGR for OpenCV
+            raw_frame = camera.capture_array()
             frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
         else:
-            success, frame = cap.read()
+            success, frame = camera.read()
             if not success:
                 break
-
-        # Motion Blur Math (teammate's logic)
-        frame_float = frame.astype("float")
+                
+        # Motion blur logic
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (21, 21), 0)
+        
         if avg is None:
-            avg = frame_float
-        else:
-            cv2.accumulateWeighted(frame_float, avg, 0.1)
+            avg = gray.copy().astype("float")
+            continue
+            
+        cv2.accumulateWeighted(gray, avg, 0.5)
+        frameDelta = cv2.absdiff(gray, cv2.convertScaleAbs(avg))
+        
+        # Simple threshold to trigger the database write (Adjust value as needed)
+        thresh = cv2.threshold(frameDelta, 25, 255, cv2.THRESH_BINARY)[1]
+        motion_detected = cv2.countNonZero(thresh) > 5000 
+        
+        # Time-Based Cooldown Logic
+        current_time = time.time()
+        if motion_detected and (current_time - last_detection_time) > COOLDOWN_SECONDS:
+            background_tasks.add_task(log_motion_detection)
+            last_detection_time = current_time
+            print(f"Motion detected! Cooldown activated for {COOLDOWN_SECONDS} seconds.")
+        
+        # Encode to MJPEG format for Streamlit
+        ret, buffer = cv2.imencode('.jpg', frameDelta)
+        frame_bytes = buffer.tobytes()
+        
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-        blurred_frame = cv2.convertScaleAbs(avg)
-
-        # Encode for HTTP streaming
-        _, buffer = cv2.imencode(".jpg", blurred_frame)
-        yield (
-            b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
-        )
-
-
-# --- SECTION 3: API ROUTES ---
-
-
+# --- 5. API Routes ---
 @app.get("/camera")
-async def camera_feed():
-    """Streams the motion-blurred video."""
-    return StreamingResponse(
-        generate_motion_blur_frames(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
-
+async def video_stream(background_tasks: BackgroundTasks):
+    """Streams the motion blur generator and passes background tasks for DB writing"""
+    return StreamingResponse(generate_motion_blur_frames(background_tasks), media_type="multipart/x-mixed-replace; boundary=frame")
 
 @app.get("/records")
 async def get_records():
-    """Queries Detections (Event Layer) and Revenue (Aggregate Layer)."""
-    try:
-        # async def prevents I/O blocking of the camera stream
-        with pool.connect() as db_conn:
-            # Query 1: Raw detection logs
-            detection_query = text(
-                "SELECT id, timestamp, temperature, weather_condition FROM detections ORDER BY timestamp DESC LIMIT 10"
-            )
-            detections_result = db_conn.execute(detection_query)
-
-            # Query 2: Daily business metrics
-            revenue_query = text(
-                "SELECT date, total_revenue FROM daily_revenue ORDER BY date DESC LIMIT 7"
-            )
-            revenue_result = db_conn.execute(revenue_query)
-
-            return {
-                "detections": [dict(row._mapping) for row in detections_result],
-                "revenue": [dict(row._mapping) for row in revenue_result],
-                "status": "success",
-            }
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    # Bound to 0.0.0.0 for external access on port 8080
-    print(f"Hardware detected: {camera_hardware}")
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    """Fetches records securely from the Cloud SQL database"""
+    with pool.connect() as db_conn:
+        query = sqlalchemy.text("""
+            SELECT id, timestamp, temperature, weather_condition 
+            FROM detections 
+            ORDER BY timestamp DESC LIMIT 50
+        """)
+        result = db_conn.execute(query).fetchall()
+        
+    if not result:
+        return [{"id": "N/A", "timestamp": "No Data", "temperature": "N/A", "weather_condition": "N/A"}]
+        
+    return [row._mapping for row in result]
