@@ -6,6 +6,3 @@ Before running the application, provide the following variables in an environmen
   - WEATHER_API_KEY: OpenWeather API key
 
 Also make sure to download JSON credentials for the Cloud SQL API, export path of credentials to environment variable "GOOGLE_APPLICATION_CREDENTIALS".
-```
-```
-```
