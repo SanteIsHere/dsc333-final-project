@@ -3,7 +3,8 @@ import cv2
 import time
 import httpx
 import datetime
-from fastapi import FastAPI, BackgroundTasks
+import threading
+from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud.sql.connector import Connector
@@ -56,46 +57,48 @@ except ModuleNotFoundError:
     print("Hardware detected: Desktop. Falling back to OpenCV VideoCapture.")
 
 
-# --- 3. Asynchronous Database Writing Logic ---
-async def fetch_weather_data():
-    """Asynchronously fetches current weather using httpx so video doesn't block."""
+# --- 3. Synchronous Database Writing Logic ---
+def fetch_weather_data():
+    """Fetches current weather synchronously so it can run in a background thread."""
     api_key = os.getenv("WEATHER_API_KEY")
     # Example coordinates for Lansing area
     url = f"https://api.openweathermap.org/data/2.5/weather?lat=42.7325&lon=-84.5555&appid={api_key}&units=imperial"
     
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url)
-            data = response.json()
-            return {
-                "temp": data["main"]["temp"],
-                "condition": data["weather"][0]["description"]
-            }
-        except Exception as e:
-            print(f"Weather API failed: {e}")
-            return {"temp": 0.0, "condition": "Unknown"}
+    try:
+        response = httpx.get(url)
+        data = response.json()
+        return {
+            "temp": data["main"]["temp"],
+            "condition": data["weather"][0]["description"]
+        }
+    except Exception as e:
+        print(f"Weather API failed: {e}")
+        return {"temp": 0.0, "condition": "Unknown"}
 
-async def log_motion_detection():
+def log_motion_detection():
     """The Event Layer: Fetches weather and securely writes to Cloud SQL."""
-    current_weather = await fetch_weather_data()
+    current_weather = fetch_weather_data()
     
-    with pool.connect() as db_conn:
-        insert_query = sqlalchemy.text("""
-            INSERT INTO detections (timestamp, temperature, weather_condition)
-            VALUES (:timestamp, :temp, :condition)
-        """)
-        
-        db_conn.execute(insert_query, {
-            "timestamp": datetime.datetime.now(),
-            "temp": current_weather['temp'],
-            "condition": current_weather['condition']
-        })
-        db_conn.commit()
-        print("Motion detection logged securely to Cloud SQL.")
+    try:
+        with pool.connect() as db_conn:
+            insert_query = sqlalchemy.text("""
+                INSERT INTO detections (timestamp, temperature, weather_condition)
+                VALUES (:timestamp, :temp, :condition)
+            """)
+            
+            db_conn.execute(insert_query, {
+                "timestamp": datetime.datetime.now(),
+                "temp": current_weather['temp'],
+                "condition": current_weather['condition']
+            })
+            db_conn.commit()
+            print("Motion detection logged securely to Cloud SQL.")
+    except Exception as e:
+        print(f"Database write failed: {e}")
 
 
 # --- 4. Motion Blur Generator with Time-Based Cooldown ---
-def generate_motion_blur_frames(background_tasks: BackgroundTasks):
+def generate_motion_blur_frames():
     avg = None
     last_detection_time = 0.0
     COOLDOWN_SECONDS = 60.0  # Wait 60 seconds before logging another person
@@ -128,7 +131,9 @@ def generate_motion_blur_frames(background_tasks: BackgroundTasks):
         # Time-Based Cooldown Logic
         current_time = time.time()
         if motion_detected and (current_time - last_detection_time) > COOLDOWN_SECONDS:
-            background_tasks.add_task(log_motion_detection)
+            # FIRE AND FORGET: Start the DB write in an isolated thread immediately
+            threading.Thread(target=log_motion_detection).start()
+            
             last_detection_time = current_time
             print(f"Motion detected! Cooldown activated for {COOLDOWN_SECONDS} seconds.")
         
@@ -152,9 +157,9 @@ def generate_motion_blur_frames(background_tasks: BackgroundTasks):
 
 # --- 5. API Routes ---
 @app.get("/camera")
-async def video_stream(background_tasks: BackgroundTasks):
-    """Streams the motion blur generator and passes background tasks for DB writing"""
-    return StreamingResponse(generate_motion_blur_frames(background_tasks), media_type="multipart/x-mixed-replace; boundary=frame")
+async def video_stream():
+    """Streams the motion blur generator securely, without blocking backend requests"""
+    return StreamingResponse(generate_motion_blur_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 @app.get("/records")
 async def get_records():
