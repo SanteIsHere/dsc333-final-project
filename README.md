@@ -5,4 +5,28 @@ Before running the application, provide the following variables in an environmen
   - INSTANCE_CONNECTION_NAME: Name of the Google Cloud SQL instance
   - WEATHER_API_KEY: OpenWeather API key
 
-Also make sure to download JSON credentials for the Cloud SQL API, export path of credentials to environment variable "GOOGLE_APPLICATION_CREDENTIALS".
+Authenticate GCloud via GCloud CLI app: https://docs.cloud.google.com/sdk/docs/install-sdk
+
+
+Steps to authenticate:
+1. gcloud auth login (Get the CLI working).
+
+2. gcloud config set project [PROJECT_ID] (Tell it which project to use).
+
+3. gcloud auth application-default login (Let your Python code talk to GCP).
+
+Ensure the following packages are installed (if running on Raspberry Pi):
+```
+sudo apt update && sudo apt install -y \
+    libcamera-dev \
+    libcap-dev \
+    python3-picamera2 \
+    python3-opencv \
+    libopencv-dev \
+    python3-dev \
+    libmariadb-dev-compat \
+    libmariadb-dev \
+    pkg-config
+```
+
+Create a virtual environment - with the `--system-site-packages` option if running on a Pi - and install the required packages.
