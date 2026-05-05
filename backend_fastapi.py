@@ -156,6 +156,10 @@ def generate_motion_blur_frames():
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
 # --- 5. API Routes ---
+@app.get("/")
+async def root():
+    return {"response": "Application backend initialized!"}
+
 @app.get("/camera")
 async def video_stream():
     """Streams the motion blur generator securely, without blocking backend requests"""
