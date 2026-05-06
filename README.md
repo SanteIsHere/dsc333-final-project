@@ -4,6 +4,7 @@ Before running the application, provide the following variables in an environmen
   - DB_PASS: Password for the user
   - INSTANCE_CONNECTION_NAME: Name of the Google Cloud SQL instance
   - WEATHER_API_KEY: OpenWeather API key
+  - PI_IPADDR: Local IP for Raspberry Pi 
 
 Authenticate GCloud via GCloud CLI app: https://docs.cloud.google.com/sdk/docs/install-sdk
 

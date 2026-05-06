@@ -1,5 +1,12 @@
 # Import streamlit library
 import streamlit as st
+from dotenv import load_dotenv, find_dotenv
+import os
+
+
+load_dotenv(find_dotenv())
+
+PI_IPADDR = os.getenv("PI_IPADDR")
 
 # Title and subheader for the page
 st.title("📷 Live Store Feed")
@@ -14,7 +21,7 @@ st.info(
 # IMPORTANT: If you are viewing this dashboard on your desktop, but the backend is running on the Pi,
 # 'localhost' will not work. Change this to the Pi's local IP (e.g., http://192.168.1.X:8000/camera)
 # or your PiTunnel URL.
-STREAM_URL = "http://10.0.0.105:8000/camera"
+STREAM_URL = f"http://{PI_IPADDR}:8000/camera"
 
 # Inject custom HTML to render the multipart stream natively
 st.markdown(

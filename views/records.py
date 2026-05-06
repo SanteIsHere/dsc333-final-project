@@ -9,7 +9,7 @@ def fetch_records():
         # IMPORTANT: Ensure this URL matches where your backend is hosted.
         # If running on the Pi, use localhost or 127.0.0.1. If viewing from
         # a different machine, use the Pi's IP (e.g., http://10.0.0.105:8080/records)
-        response = requests.get("http://127.0.0.1:8000/records")
+        response = requests.get("http://raspberrypi:8000/records")
         response.raise_for_status()
 
         # THE FIX: Return the JSON list directly so Pandas can consume it
