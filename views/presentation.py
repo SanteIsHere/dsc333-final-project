@@ -11,20 +11,16 @@ st.image(url_lansing, use_container_width=True)
 
 ##Slides for presentation
 slides = [
-    "What Are the busiest times of the day?(By Hour)",
-    "What Days of the week are the busiest?",
-    "Does the Weather Affect Foot Traffic?",
-    "Does the Amount of Money Made in a Day Affect Foot Traffic?",
+    "Busiest Hours",
+    "Busiest Days",
+    "Weather vs. Foot Traffic and Revenue",
 ]
-# weather we can do a chart for temperatre and foot traffic, or we can do a chart for weather conditions(precip or no precip?) and foot traffic.
-# both would be good
-##Da
 
+# Reset current slide, if one is not already in state cache.
 if "current_slide" not in st.session_state:
     st.session_state.current_slide = slides[0]
 
 # Sidebar Navigation of results
-
 st.sidebar.title("Navigation")
 st.session_state.current_slide = st.sidebar.radio(
     "Go to Slide", slides, index=slides.index(st.session_state.current_slide)
@@ -38,51 +34,61 @@ st.title("Measuring Foot Traffic at Lansing Building Products")
 
 
 def slide_1():
-    st.header("What Are the busiest times of the day?(By Hour)")
+    st.header("What are the busiest hours of the day?")
+    
     st.subheader(
-        "Throughout a work day customers in at all times through 7am to 430pm. One of our main goals was to find "
-        "out when the busiest times of the day were."
+            "Throughout a workday - from 7:00 AM to 4:30 PM - Lansing Building Products sees "
+            "a variable amount of customers."
+    )
+     
+    st.subheader("We wanted to determine when the busiest hours of the day were - based on hourly foot traffic."
     )
 
 
 def slide_2():
-    st.header("What Days of the week are the busiest?")
+    st.header("What are the busiest days of the week?")
+    
     st.subheader(
-        "We also wanted to find out which days of the week were the busiest. This would help us know when to have more staff on hand and when to expect more customers."
+        "We also wanted to determine which days of the week were the busiest."
+    )
+
+    st.subheader(
+        "Knowing peak trafficked weekdays would inform when to frontload staff."
     )
 
 
 def slide_3():
-    st.header("Does the Weather Affect Foot Traffic?")
+    st.header("How does weather affect foot traffic and total revenue?")
+    
     st.subheader(
-        "We wanted to find out if the weather had any effect on foot traffic. We looked at both temperature and precipitation to see if there was any correlation."
+        "We wanted to see if the weather had any effect on foot traffic."
+    )
+
+    st.subheader(
+        "We looked at both temperature and precipitation to see if there was any correlation."
     )
 
 
-def slide_4():
-    st.header("Does the Amount of Money Made in a Day Affect Foot Traffic?")
-    st.subheader(
-        "We also wanted to find out if there was any correlation between the amount of money made in a day and foot traffic."
-        "More money mad in a day should indicate more customers."
-    )
-
-
-if slide == "What Are the busiest times of the day?(By Hour)":
+if slide == "Busiest Hours":
     slide_1()
-elif slide == "What Days of the week are the busiest?":
+elif slide == "Busiest Days":
     slide_2()
-elif slide == "Does the Weather Affect Foot Traffic?":
+else: # Weather, Foot Traffic/Rev Slide
     slide_3()
-elif slide == "Does the Amount of Money Made in a Day Affect Foot Traffic?":
-    slide_4()
 
-    ##Adding a next and previous button to navigate through the slides if user would like to use instead of the sidebar.
+##################################
+# Button based slides navigation #
+##################################
 
+# Get the index of the current slide
 current_index = slides.index(slide)
+
+# Load the next slide
 if current_index < len(slides) - 1:
     if st.button("Next"):
         st.session_state.current_slide = slides[current_index + 1]
 
+# Load the prev slide
 if current_index > 0:
     if st.button("Previous"):
         st.session_state.current_slide = slides[current_index - 1]

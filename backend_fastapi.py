@@ -4,9 +4,11 @@ import time
 import httpx
 import datetime
 import threading
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List
 from google.cloud.sql.connector import Connector
 import sqlalchemy
 from dotenv import load_dotenv
@@ -155,7 +157,14 @@ def generate_motion_blur_frames():
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-# --- 5. API Routes ---
+
+# --- 5. Data Models ---
+class RevenueRecord(BaseModel):
+    date: str
+    total_revenue: float
+
+
+# --- 6. API Routes ---
 @app.get("/")
 async def root():
     return {"response": "Application backend initialized!"}
@@ -180,3 +189,83 @@ async def get_records():
         return [{"id": "N/A", "timestamp": "No Data", "temperature": "N/A", "weather_condition": "N/A"}]
         
     return [row._mapping for row in result]
+
+@app.get("/analytics")
+async def get_analytics_data():
+    """Dynamically links revenue and foot traffic data via SQL JOIN"""
+    try:
+        with pool.connect() as db_conn:
+            query = sqlalchemy.text("""
+                SELECT 
+                    r.date, 
+                    r.total_revenue, 
+                    COUNT(d.id) as foot_traffic, 
+                    AVG(d.temperature) as avg_temp
+                FROM daily_revenue r
+                LEFT JOIN detections d ON r.date = DATE(d.timestamp)
+                GROUP BY r.date, r.total_revenue
+                ORDER BY r.date ASC;
+            """)
+            result = db_conn.execute(query).fetchall()
+            
+            data = [
+                {
+                    "date": str(row.date),
+                    "total_revenue": float(row.total_revenue),
+                    "foot_traffic": int(row.foot_traffic),
+                    "avg_temp": float(row.avg_temp) if row.avg_temp else 0.0
+                }
+                for row in result
+            ]
+            return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/revenue")
+async def upload_revenue_data(records: List[RevenueRecord]):
+    """Accepts bulk revenue uploads and writes to the aggregate layer table"""
+    try:
+        with pool.connect() as db_conn:
+            for record in records:
+                query = sqlalchemy.text("""
+                    INSERT INTO daily_revenue (date, total_revenue) 
+                    VALUES (:date, :revenue)
+                    ON DUPLICATE KEY UPDATE total_revenue = :revenue;
+                """)
+                db_conn.execute(query, {"date": record.date, "revenue": record.total_revenue})
+            
+            db_conn.commit() 
+            
+        return {"status": "success", "message": f"Successfully processed {len(records)} revenue records."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/traffic-trends")
+async def get_traffic_trends():
+    """Fetches foot traffic aggregated by hour and day of the week"""
+    try:
+        with pool.connect() as db_conn:
+            # Hourly Trends: Count detections grouped by the hour
+            hourly_query = sqlalchemy.text("""
+                SELECT HOUR(timestamp) as hour, COUNT(id) as count 
+                FROM detections 
+                GROUP BY HOUR(timestamp)
+                ORDER BY hour ASC;
+            """)
+            hourly_result = db_conn.execute(hourly_query).fetchall()
+            
+            # Day of Week Trends: Count detections grouped by the day
+            dow_query = sqlalchemy.text("""
+                SELECT DAYNAME(timestamp) as day_name, DAYOFWEEK(timestamp) as day_index, COUNT(id) as count 
+                FROM detections 
+                GROUP BY day_name, day_index
+                ORDER BY day_index ASC;
+            """)
+            dow_result = db_conn.execute(dow_query).fetchall()
+
+            return {
+                "hourly": [{"hour": int(row.hour), "count": int(row.count)} for row in hourly_result],
+                "day_of_week": [{"day": str(row.day_name), "count": int(row.count)} for row in dow_result]
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -12,13 +12,14 @@ presentation_page = st.Page(
 )
 camera_page = st.Page("views/camera.py", title="Live Camera Feed", icon="📷")
 records_page = st.Page("views/records.py", title="Detection Records", icon="📜")
+analytics_page = st.Page("views/analytics.py", title="Visual Analytics", icon="📈") # <-- New Analytics Page Defined
 
 # 3. Build the Navigation Sidebar
 # Grouping them in a dictionary creates clean headers in the sidebar menu
 pg = st.navigation(
     {
         "Project Overview": [presentation_page],
-        "Live Analytics": [camera_page, records_page],
+        "Live Analytics": [camera_page, records_page, analytics_page], # <-- Added to the Live Analytics menu
     }
 )
 
