@@ -8,7 +8,12 @@ from dotenv import find_dotenv, load_dotenv
 # Load environment variables
 # load_dotenv(find_dotenv())
 # BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8080")
-BACKEND_URL = "http://raspberrypi:8000"
+# BACKEND_URL = "http://raspberrypi:8000"
+
+
+load_dotenv(find_dotenv())
+
+PI_IPADDR = os.getenv("PI_IPADDR")
 
 st.title("📊 Traffic & Revenue Analytics")
 st.write("Analyze the correlation between store foot traffic, weather conditions, and revenue.")
@@ -16,7 +21,7 @@ st.write("Analyze the correlation between store foot traffic, weather conditions
 @st.cache_data(ttl=600)
 def fetch_analytics_data():
     try:
-        response = requests.get(f"{BACKEND_URL}/analytics")
+        response = requests.get(f"{PI_IPADDR}:8000/analytics")
         response.raise_for_status()
         return response.json()
     except Exception:
@@ -25,7 +30,7 @@ def fetch_analytics_data():
 @st.cache_data(ttl=600)
 def fetch_traffic_trends():
     try:
-        response = requests.get(f"{BACKEND_URL}/traffic-trends")
+        response = requests.get(f"{PI_IPADDR}:8000/traffic-trends")
         response.raise_for_status()
         return response.json()
     except Exception:
@@ -143,7 +148,7 @@ if uploaded_file is not None:
             if st.button("Submit to Database"):
                 with st.spinner("Uploading records to Cloud SQL..."):
                     payload = df_upload.to_dict(orient="records")
-                    response = requests.post(f"{BACKEND_URL}/revenue", json=payload)
+                    response = requests.post(f"{PI_IPADDR}:8000/revenue", json=payload)
                     if response.status_code == 200:
                         st.success(response.json()["message"])
                         fetch_analytics_data.clear()
