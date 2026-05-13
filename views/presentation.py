@@ -86,7 +86,7 @@ slides = {
         "Busiest Days": slide_bd,
         "Weather vs. Foot Traffic and Revenue": slide_weatherftr,
         "System Arch Diagram": slide_diagram,
-        "Camera Setup": slide_cam_setup 
+        "Camera Setup": slide_cam_setup,
         "ER diagram": slide_database
     }
 
