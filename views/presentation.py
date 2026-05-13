@@ -14,6 +14,7 @@ slides = [
     "Busiest Hours",
     "Busiest Days",
     "Weather vs. Foot Traffic and Revenue",
+    "System Arch Diagram"
 ]
 
 # Reset current slide, if one is not already in state cache.
@@ -68,11 +69,27 @@ def slide_3():
         "We looked at both temperature and precipitation to see if there was any correlation."
     )
 
+def slide_diagram():
+    st.header("Project Architecture")
+    st.markdown("A professional-grade decoupled system separating our presentation, logic, and data layers:")
+    
+    # Render the static architecture diagram
+    st.image("assets/SystemArchDiagram.png", caption="RPi + Streamlit + FastAPI Data Flow", use_container_width=True)
+    
+    st.markdown("""
+    **Frontend:** Streamlit acts as the Presentation Layer (Frontend).\n 
+    **Backend:** FastAPI acts as the Orchestrator, handling the Logic/Data Layer (Backend).\n
+    **Hardware:** The Raspberry Pi captures the live feed, and OpenCV processes the frames for motion detection.\n
+    **Database:** Cloud SQL acts as our storage, keeping high-frequency event data separate from business metrics.
+    """)
+
 
 if slide == "Busiest Hours":
     slide_1()
 elif slide == "Busiest Days":
     slide_2()
+elif slide == "System Arch Diagram":
+    slide_diagram()
 else: # Weather, Foot Traffic/Rev Slide
     slide_3()
 
