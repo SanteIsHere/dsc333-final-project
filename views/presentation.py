@@ -1,40 +1,14 @@
 import streamlit as st
 
+def slide_database():
+    st.header("🗄️ ER-Diagram for Backing SQL Database")
 
-st.set_page_config(
-    page_title="Measuring Foot Traffic at Lansing Building Products", layout="wide"
-)
-st.subheader("A Data Science Project by Asante Frye and Tyler Gaudino")
-url_lansing = "https://lansingbp.com/wp-content/themes/lansing/images/logo-hi-res.png"
+    st.markdown("We stored detections and daily revenue totals in their own tables as part of our Cloud SQL Database.")
 
-st.image(url_lansing, use_container_width=True)
-
-##Slides for presentation
-slides = [
-    "Busiest Hours",
-    "Busiest Days",
-    "Weather vs. Foot Traffic and Revenue",
-    "System Arch Diagram"
-]
-
-# Reset current slide, if one is not already in state cache.
-if "current_slide" not in st.session_state:
-    st.session_state.current_slide = slides[0]
-
-# Sidebar Navigation of results
-st.sidebar.title("Navigation")
-st.session_state.current_slide = st.sidebar.radio(
-    "Go to Slide", slides, index=slides.index(st.session_state.current_slide)
-)
-
-# Current slide
-
-slide = st.session_state.current_slide
-
-st.title("Measuring Foot Traffic at Lansing Building Products")
+    st.image("assets/ER-diagram.png")
 
 
-def slide_1():
+def slide_bh():
     st.header("What are the busiest hours of the day?")
     
     st.subheader(
@@ -46,7 +20,7 @@ def slide_1():
     )
 
 
-def slide_2():
+def slide_bd():
     st.header("What are the busiest days of the week?")
     
     st.subheader(
@@ -58,7 +32,7 @@ def slide_2():
     )
 
 
-def slide_3():
+def slide_weatherftr():
     st.header("How does weather affect foot traffic and total revenue?")
     
     st.subheader(
@@ -83,29 +57,72 @@ def slide_diagram():
     **Database:** Cloud SQL acts as our storage, keeping high-frequency event data separate from business metrics.
     """)
 
+def slide_cam_setup():
+    st.header("📷Camera Setup")
 
-if slide == "Busiest Hours":
-    slide_1()
-elif slide == "Busiest Days":
-    slide_2()
-elif slide == "System Arch Diagram":
-    slide_diagram()
-else: # Weather, Foot Traffic/Rev Slide
-    slide_3()
+    st.markdown("""
+    Our Raspberry Pi was positioned at a low angle view to capture customer traffic via camera.\n
+    We utilized the OpenCV library to blur distinguishing customer features for privacy.
+    """)
+
+    st.image("assets/Camera_setup_store.png", caption="Storefront Location", use_container_width=True)
+
+    st.image("assets/Camera_streamlit.png", caption="View on the Streamlit page", use_container_width=True)
+
+st.set_page_config(
+    page_title="Measuring Foot Traffic at Lansing Building Products", layout="wide"
+)
+st.subheader("A Data Science Project by Asante Frye and Tyler Gaudino")
+url_lansing = "https://lansingbp.com/wp-content/themes/lansing/images/logo-hi-res.png"
+
+st.image(url_lansing, use_container_width=True)
+
+
+
+## Slides for presentation
+
+slides = {
+        "Busiest Hours": slide_bh,
+        "Busiest Days": slide_bd,
+        "Weather vs. Foot Traffic and Revenue": slide_weatherftr,
+        "System Arch Diagram": slide_diagram,
+        "Camera Setup": slide_cam_setup 
+        "ER diagram": slide_database
+    }
+
+# If there is no current slide, set it to the initial slide
+if "current_slide" not in st.session_state:
+    st.session_state.current_slide = "Busiest Hours"
+
+# Sidebar Navigation of results
+st.sidebar.title("Navigation")
+st.session_state.current_slide = st.sidebar.radio(
+    "Go to Slide", slides, index=list(slides.keys()).index(st.session_state.current_slide)
+)
+
+# Current slide
+
+slide = st.session_state.current_slide
+
+st.title("Measuring Foot Traffic at Lansing Building Products")
+
+
+# Load slide using map
+slides[slide]()
 
 ##################################
 # Button based slides navigation #
 ##################################
 
 # Get the index of the current slide
-current_index = slides.index(slide)
+current_index = list(slides.keys()).index(slide)
 
 # Load the next slide
 if current_index < len(slides) - 1:
     if st.button("Next"):
-        st.session_state.current_slide = slides[current_index + 1]
+        st.session_state.current_slide = list(slides.keys())[current_index + 1]
 
 # Load the prev slide
 if current_index > 0:
     if st.button("Previous"):
-        st.session_state.current_slide = slides[current_index - 1]
+        st.session_state.current_slide = list(slides.keys())[current_index - 1]
